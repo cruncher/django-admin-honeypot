@@ -1,11 +1,3 @@
-import django
-
-from ipware import get_client_ip
-
-from admin_honeypot.forms import HoneypotLoginForm
-from admin_honeypot.models import LoginAttempt
-from admin_honeypot.signals import honeypot
-
 from django.contrib.admin.sites import AdminSite
 from django.contrib.auth import REDIRECT_FIELD_NAME
 from django.contrib.auth.views import redirect_to_login
@@ -13,19 +5,29 @@ from django.shortcuts import redirect
 from django.urls import reverse
 from django.utils.translation import gettext as _
 from django.views import generic
+from ipware import get_client_ip
+
+from admin_honeypot.forms import HoneypotLoginForm
+from admin_honeypot.models import LoginAttempt
+from admin_honeypot.signals import honeypot
 
 
 class AdminHoneypot(generic.FormView):
-    template_name = 'admin_honeypot/login.html'
+    template_name = "admin_honeypot/login.html"
     form_class = HoneypotLoginForm
 
     def dispatch(self, request, *args, **kwargs):
-        if not request.path.endswith('/'):
-            return redirect(request.path + '/', permanent=True)
+        if not request.path.endswith("/"):
+            return redirect(request.path + "/", permanent=True)
+
+        # If the user is an admin and got here by "accident",
+        # redirect them.
+        if request.user.is_authenticated and request.user.is_superuser:
+            return redirect("admin:index")
 
         # Django redirects the user to an explicit login view with
         # a next parameter, so emulate that.
-        login_url = reverse('admin_honeypot:login')
+        login_url = reverse("admin_honeypot:login")
         if request.path != login_url:
             return redirect_to_login(request.get_full_path(), login_url)
 
@@ -36,12 +38,14 @@ class AdminHoneypot(generic.FormView):
 
     def get_context_data(self, **kwargs):
         context = super(AdminHoneypot, self).get_context_data(**kwargs)
-        context.update({
-            **AdminSite().each_context(self.request),
-            'app_path': self.request.get_full_path(),
-            REDIRECT_FIELD_NAME: reverse('admin_honeypot:index'),
-            'title': _('Log in'),
-        })
+        context.update(
+            {
+                **AdminSite().each_context(self.request),
+                "app_path": self.request.get_full_path(),
+                REDIRECT_FIELD_NAME: reverse("admin_honeypot:index"),
+                "title": _("Log in"),
+            }
+        )
         return context
 
     def form_valid(self, form):
@@ -50,10 +54,10 @@ class AdminHoneypot(generic.FormView):
     def form_invalid(self, form):
         ip_address, is_routable = get_client_ip(self.request)
         instance = LoginAttempt.objects.create(
-            username=self.request.POST.get('username'),
+            username=self.request.POST.get("username"),
             session_key=self.request.session.session_key,
             ip_address=ip_address,
-            user_agent=self.request.META.get('HTTP_USER_AGENT'),
+            user_agent=self.request.META.get("HTTP_USER_AGENT"),
             path=self.request.get_full_path(),
         )
         honeypot.send(sender=LoginAttempt, instance=instance, request=self.request)

@@ -1,11 +1,8 @@
 import re
-
 from urllib.parse import quote_plus
 
-import django
-import pytest
-
 from django.conf import settings
+from django.contrib.auth.models import User
 from django.core import mail
 from django.test import TestCase
 from django.urls import reverse
@@ -18,19 +15,19 @@ class AdminHoneypotTest(TestCase):
 
     @property
     def admin_login_url(self):
-        return reverse('admin:login')
+        return reverse("admin:login")
 
     @property
     def admin_url(self):
-        return reverse('admin:index')
+        return reverse("admin:index")
 
     @property
     def honeypot_login_url(self):
-        return reverse('admin_honeypot:login')
+        return reverse("admin_honeypot:login")
 
     @property
     def honeypot_url(self):
-        return reverse('admin_honeypot:index')
+        return reverse("admin_honeypot:index")
 
     def test_same_content(self):
         """
@@ -39,14 +36,15 @@ class AdminHoneypotTest(TestCase):
         hide the user tools.
         """
 
-        admin_html = self.client.get(self.admin_url, follow=True).content.decode('utf-8')
-        honeypot_html = (self.client.get(self.honeypot_url, follow=True).content.decode('utf-8')
+        admin_html = self.client.get(self.admin_url, follow=True).content.decode(
+            "utf-8"
+        )
+        honeypot_html = (
+            self.client.get(self.honeypot_url, follow=True).content.decode("utf-8")
             # /admin/login/ -> /secret/login/
             .replace(self.honeypot_login_url, self.admin_login_url)
-
             # "/admin/" -> "/secret/"
             .replace('"{0}"'.format(self.honeypot_url), '"{0}"'.format(self.admin_url))
-
             # %2fadmin%2f -> %2fsecret%2f
             .replace(quote_plus(self.honeypot_url), quote_plus(self.admin_url))
         )
@@ -62,23 +60,19 @@ class AdminHoneypotTest(TestCase):
         """
         A new LoginAttempt object is created
         """
-        data = {
-            'username': 'admin',
-            'password': 'letmein'
-        }
+        data = {"username": "admin", "password": "letmein"}
         self.client.post(self.honeypot_login_url, data)
-        attempt = LoginAttempt.objects.latest('pk')
-        self.assertEqual(data['username'], attempt.username)
-        self.assertEqual(data['username'], str(attempt))
+        attempt = LoginAttempt.objects.latest("pk")
+        self.assertEqual(data["username"], attempt.username)
+        self.assertEqual(data["username"], str(attempt))
 
     def test_email_admins(self):
         """
         An email is sent to settings.ADMINS
         """
-        self.client.post(self.honeypot_login_url, {
-            'username': 'admin',
-            'password': 'letmein'
-        })
+        self.client.post(
+            self.honeypot_login_url, {"username": "admin", "password": "letmein"}
+        )
         # CONSIDER: Is there a better way to do this?
         self.assertTrue(len(mail.outbox) > 0)  # We sent at least one email...
         self.assertIn(settings.ADMINS[0][1], mail.outbox[0].to)  # ...to an admin
@@ -87,10 +81,10 @@ class AdminHoneypotTest(TestCase):
         """
         /admin redirects to /admin/ permanent redirect.
         """
-        url = self.honeypot_url + 'foo/'
-        redirect_url = self.honeypot_login_url + '?next=' + url
+        url = self.honeypot_url + "foo/"
+        redirect_url = self.honeypot_login_url + "?next=" + url
 
-        response = self.client.get(url.rstrip('/'), follow=True)
+        response = self.client.get(url.rstrip("/"), follow=True)
         self.assertRedirects(response, redirect_url, status_code=301)
 
     def test_real_url_leak(self):
@@ -99,6 +93,27 @@ class AdminHoneypotTest(TestCase):
         login form page.
         """
 
-        honeypot_html = self.client.get(self.honeypot_url, follow=True).content.decode('utf-8')
-        self.assertNotIn('{0}'.format(self.admin_url), honeypot_html)
-        self.assertNotIn('{0}'.format(self.admin_login_url), honeypot_html)
+        honeypot_html = self.client.get(self.honeypot_url, follow=True).content.decode(
+            "utf-8"
+        )
+        self.assertNotIn("{0}".format(self.admin_url), honeypot_html)
+        self.assertNotIn("{0}".format(self.admin_login_url), honeypot_html)
+
+    def test_admin_redirects(self):
+        "tests that an already logged in admin gets redirected to admin:index proper"
+        resp = self.client.get(self.honeypot_url)
+        redirect_url = self.honeypot_login_url + "?next=" + self.honeypot_url
+
+        self.assertRedirects(resp, redirect_url)
+
+        self.assertTrue(
+            User.objects.create_superuser(
+                "admin",
+                email="admin@admin.com",
+                password="admin",
+            )
+        )
+
+        self.client.login(username="admin", password="admin")
+        resp = self.client.get(self.honeypot_url, follow=False)
+        self.assertTrue(resp.url == self.admin_url)
